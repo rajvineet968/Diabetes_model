@@ -1,33 +1,83 @@
 import mlflow
 import mlflow.sklearn
-from sklearn.datasets import load_diabetes
+import pandas as pd
+
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import accuracy_score
 
-def main():
-    # MLflow setup for CI
-    mlflow.set_tracking_uri("file:./mlruns")
-    mlflow.set_experiment("ci_cd_training")
+# Load dataset
+df = pd.read_csv("data/indian_insurance_data.csv")
 
-    # Load sample data (CI-safe)
-    X, y = load_diabetes(return_X_y=True)
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+X = df.drop(columns=["diabetes"])
+y = df["diabetes"]
 
-    with mlflow.start_run():
-        model = RandomForestRegressor(n_estimators=50, random_state=42)
-        model.fit(X_train, y_train)
+num_cols = [
+    "age", "weight", "bmi", "bloodpressure",
+    "no_of_dependents", "regular_ex", "claim"
+]
 
-        preds = model.predict(X_test)
-        mse = mean_squared_error(y_test, preds)
+cat_cols = [
+    "sex", "hereditary_diseases",
+    "smoker", "city", "job_title"
+]
 
-        mlflow.log_param("model", "RandomForest")
-        mlflow.log_metric("mse", mse)
-        mlflow.sklearn.log_model(model, "model")
+# Numeric preprocessing
+num_pipeline = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="mean"))
+    ]
+)
 
-        print("Training completed. MSE:", mse)
+# Categorical preprocessing
+cat_pipeline = Pipeline(
+    steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(handle_unknown="ignore"))
+    ]
+)
 
-if __name__ == "__main__":
-    main()
+# Column transformer
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("num", num_pipeline, num_cols),
+        ("cat", cat_pipeline, cat_cols)
+    ]
+)
+
+# Model
+model = RandomForestClassifier(
+    n_estimators=100,
+    random_state=42,
+    n_jobs=-1
+)
+
+pipeline = Pipeline(
+    steps=[
+        ("preprocessor", preprocessor),
+        ("model", model)
+    ]
+)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+with mlflow.start_run():
+    pipeline.fit(X_train, y_train)
+
+    preds = pipeline.predict(X_test)
+    acc = accuracy_score(y_test, preds)
+
+    mlflow.log_param("model", "RandomForest")
+    mlflow.log_param("n_estimators", 100)
+    mlflow.log_metric("accuracy", acc)
+
+    mlflow.sklearn.log_model(pipeline, "model")
+
+    print("✅ Training complete")
+    print("Accuracy:", acc)
